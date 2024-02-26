@@ -30,6 +30,30 @@ function onError(msg) {
   alert('Calendar error: ' + JSON.stringify(msg));
 }
 
+function hasReadPermission() {
+  window.plugins.calendar.hasReadPermission(onSuccess);
+}
+
+function requestReadPermission() {
+  window.plugins.calendar.requestReadPermission(onSuccess);
+}
+
+function hasWritePermission() {
+  window.plugins.calendar.hasWritePermission(onSuccess);
+}
+
+function requestWritePermission() {
+  window.plugins.calendar.requestWritePermission(onSuccess);
+}
+
+function hasReadWritePermission() {
+  window.plugins.calendar.hasReadWritePermission(onSuccess);
+}
+
+function requestReadWritePermission() {
+  window.plugins.calendar.requestReadWritePermission(onSuccess);
+}
+
 function openCalendar() {
   // today + 3 days
   var d = new Date(new Date().getTime() + 3 * 24 * 60 * 60 * 1000);
@@ -41,7 +65,14 @@ function listCalendars() {
 }
 
 function createCalendar() {
-  window.plugins.calendar.createCalendar(calendarName, onSuccess, onError);
+  var options = window.plugins.calendar.getCreateCalendarOptions();
+  options.calendarName = "MyCordovaCalendar";
+  options.calendarColor = "#FF0000"; // red
+  window.plugins.calendar.createCalendar(options, onSuccess, onError);
+}
+
+function deleteCalendar() {
+  window.plugins.calendar.deleteCalendar("MyCordovaCalendar", onSuccess, onError);
 }
 
 function deleteEvent() {
@@ -61,7 +92,7 @@ function createCalendarEventInteractivelyWithOptions() {
 }
 
 function createCalendarEventWithOptions() {
-  window.plugins.calendar.createEventWithOptions(title, loc, notes, startDate, endDate, options, onSuccess, onError)
+  window.plugins.calendar.createEventWithOptions(title, loc, notes, startDate, endDate, options, onSuccess, onError);
 }
 
 function findEventWithFilter() {
@@ -70,6 +101,11 @@ function findEventWithFilter() {
 
 function findEventNoFilter() {
   window.plugins.calendar.findEvent(null, null, null, startDate, endDate, onSuccess, onError);
+}
+
+function listEventsInRange() {
+  startDate.setHours(startDate.getHours() - 12);
+  window.plugins.calendar.listEventsInRange(startDate, endDate, onSuccess, onError);
 }
 
 window.onerror = function(msg, file, line) {

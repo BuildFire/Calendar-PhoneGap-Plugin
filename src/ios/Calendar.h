@@ -8,7 +8,8 @@
 @property (nonatomic, retain) EKEventStore* eventStore;
 @property (nonatomic, copy) NSString *interactiveCallbackId;
 
-- (void)initEventStoreWithCalendarCapabilities;
+- (void)initEventStoreWithFullCalendarCapabilities;
+- (void)initEventStoreWithWriteCalendarCapabilities;
 
 -(NSArray*)findEKEventsWithTitle: (NSString *)title
                         location: (NSString *)location
@@ -16,6 +17,15 @@
                        startDate: (NSDate *)startDate
                          endDate: (NSDate *)endDate
                        calendars: (NSArray *)calendars;
+
+- (void)hasReadPermission:(CDVInvokedUrlCommand*)command;
+- (void)requestReadPermission:(CDVInvokedUrlCommand*)command;
+
+- (void)hasWritePermission:(CDVInvokedUrlCommand*)command;
+- (void)requestWritePermission:(CDVInvokedUrlCommand*)command;
+
+- (void)hasReadWritePermission:(CDVInvokedUrlCommand*)command;
+- (void)requestReadWritePermission:(CDVInvokedUrlCommand*)command;
 
 - (void)openCalendar:(CDVInvokedUrlCommand*)command;
 - (void)createCalendar:(CDVInvokedUrlCommand*)command;
@@ -32,6 +42,7 @@
 - (void)deleteEvent:(CDVInvokedUrlCommand*)command;
 - (void)deleteEventFromNamedCalendar:(CDVInvokedUrlCommand*)command;
 - (void)deleteEventFromCalendar:(CDVInvokedUrlCommand*)command calendar:(EKCalendar*)calendar;
+- (void)deleteEventById:(CDVInvokedUrlCommand*)command;
 - (void)eventEditViewController:(EKEventEditViewController*)controller didCompleteWithAction:(EKEventEditViewAction) action;
 
 @end

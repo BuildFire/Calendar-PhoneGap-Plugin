@@ -9,32 +9,105 @@
 @synthesize eventStore;
 @synthesize interactiveCallbackId;
 
-#pragma mark Initialisation functions
+#pragma mark Initialization functions
 
-- (CDVPlugin*) initWithWebView:(UIWebView*)theWebView {
-  self = (Calendar*)[super initWithWebView:theWebView];
-  if (self) {
-    [self initEventStoreWithCalendarCapabilities];
-  }
-  return self;
+- (void) pluginInitialize {
 }
 
-- (void) initEventStoreWithCalendarCapabilities {
+/**
+ * Init event store with read and write capabilities.
+ *
+ * Note: This will overwrite the existing event store.
+ */
+- (void) initEventStoreWithFullCalendarCapabilities {
+  NSLog(@"Initialising calendar event store with full access.");
+
+  EKEventStore* eventStoreCandidate = [[EKEventStore alloc] init];
   __block BOOL accessGranted = NO;
-  eventStore= [[EKEventStore alloc] init];
-  if([eventStore respondsToSelector:@selector(requestAccessToEntityType:completion:)]) {
-    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-    [eventStore requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted, NSError *error) {
+
+  dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+  if (@available(iOS 17.0, *)) {
+    [eventStoreCandidate requestFullAccessToEventsWithCompletion:^(BOOL granted, NSError *error) {
       accessGranted = granted;
+
+      if (!accessGranted) {
+        NSLog(@"Full access to the event store not granted. Error: %@", error.localizedDescription);
+      }
+
       dispatch_semaphore_signal(sema);
     }];
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
-  } else { // we're on iOS 5 or older
-    accessGranted = YES;
+  } else {
+    // iOS 16 or lower
+    if([eventStoreCandidate respondsToSelector:@selector(requestAccessToEntityType:completion:)]) {
+      [eventStoreCandidate requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted, NSError *error) {
+        accessGranted = granted;
+
+        if (!accessGranted) {
+          NSLog(@"Full access to the event store not granted. Error: %@", error.localizedDescription);
+        }
+
+        dispatch_semaphore_signal(sema);
+      }];
+    } else {
+      // iOS 5 or lower
+      accessGranted = YES;
+      dispatch_semaphore_signal(sema);
+    }
   }
+  dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
 
   if (accessGranted) {
-    self.eventStore = eventStore;
+    self.eventStore = eventStoreCandidate;
+    NSLog(@"Full access to the event store granted and eventStore initialized.");
+  }
+}
+
+/**
+ * Init event store with write capabilities only.
+ *
+ * Note: This will overwrite the existing event store, so you may not be able to read events after requesting write
+ * only permission, even if you have previously requested read and write permission.
+ */
+- (void) initEventStoreWithWriteCalendarCapabilities {
+  NSLog(@"Initialising calendar event store with write access.");
+
+  EKEventStore* eventStoreCandidate = [[EKEventStore alloc] init];
+  __block BOOL accessGranted = NO;
+
+  dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+  if (@available(iOS 17.0, *)) {
+    [eventStoreCandidate requestWriteOnlyAccessToEventsWithCompletion:^(BOOL granted, NSError *error) {
+      accessGranted = granted;
+
+      if (!accessGranted) {
+        NSLog(@"Write access to the event store not granted. Error: %@", error.localizedDescription);
+      }
+
+      dispatch_semaphore_signal(sema);
+    }];
+  } else {
+    // iOS 16 or lower
+    if([eventStoreCandidate respondsToSelector:@selector(requestAccessToEntityType:completion:)]) {
+      [eventStoreCandidate requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted, NSError *error) {
+        accessGranted = granted;
+
+        if (!accessGranted) {
+          NSLog(@"Write access to the event store not granted after requesting full access for iOS <= 16. Error: %@", error.localizedDescription);
+        }
+
+        dispatch_semaphore_signal(sema);
+      }];
+    } else {
+      // iOS 5 or lower
+      accessGranted = YES;
+      dispatch_semaphore_signal(sema);
+    }
+  }
+  dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+
+  if (accessGranted) {
+    self.eventStore = eventStoreCandidate;
+    NSLog(@"Write access to the event store granted and eventStore initialized.");
   }
 }
 
@@ -56,8 +129,12 @@
 
     EKEvent *myEvent = [EKEvent eventWithEventStore: self.eventStore];
     myEvent.title = title;
-    myEvent.location = location;
-    myEvent.notes = notes;
+    if (location != (id)[NSNull null]) {
+      myEvent.location = location;
+    }
+    if (notes != (id)[NSNull null]) {
+      myEvent.notes = notes;
+    }
     myEvent.startDate = myStartDate;
 
     int duration = _endInterval - _startInterval;
@@ -157,7 +234,7 @@
 
       // Find matches
       if (calEventID != nil) {
-          theEvent = [self.eventStore calendarItemWithIdentifier:calEventID];
+          theEvent = (EKEvent *)[self.eventStore eventWithIdentifier:calEventID];
       }
 
     if (theEvent == nil) {
@@ -250,7 +327,7 @@
       if (error) {
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.userInfo.description];
       } else {
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:theEvent.calendarItemIdentifier];
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:theEvent.eventIdentifier];
       }
     } else {
       // Otherwise return a no result error (could be more than 1, but not a biggie)
@@ -313,11 +390,11 @@
   }
   if (location != (id)[NSNull null] && location.length > 0) {
     location = [location stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
-    [predicateStrings addObject:[NSString stringWithFormat:@"location == '%@'", location]];
+    [predicateStrings addObject:[NSString stringWithFormat:@"location contains[c] '%@'", location]];
   }
   if (notes != (id)[NSNull null] && notes.length > 0) {
     notes = [notes stringByReplacingOccurrencesOfString:@"'" withString:@"\\'"];
-    [predicateStrings addObject:[NSString stringWithFormat:@"notes == '%@'", notes]];
+    [predicateStrings addObject:[NSString stringWithFormat:@"notes contains[c] '%@'", notes]];
   }
 
   NSString *predicateString = [predicateStrings componentsJoinedByString:@" AND "];
@@ -342,10 +419,16 @@
 }
 
 - (EKCalendar*) findEKCalendar: (NSString *)calendarName {
-  for (EKCalendar *thisCalendar in [self.eventStore calendarsForEntityType:EKEntityTypeEvent]){
-    NSLog(@"Calendar: %@", thisCalendar.title);
-    if ([thisCalendar.title isEqualToString:calendarName]) {
-      return thisCalendar;
+  NSArray<EKCalendar *> *calendars = [self.eventStore calendarsForEntityType:EKEntityTypeEvent];
+  if (calendars != nil && calendars.count > 0) {
+    for (EKCalendar *thisCalendar in calendars) {
+      NSLog(@"Calendar: %@", thisCalendar.title);
+      if ([thisCalendar.title isEqualToString:calendarName]) {
+        return thisCalendar;
+      }
+      if ([thisCalendar.calendarIdentifier isEqualToString:calendarName]) {
+        return thisCalendar;
+      }
     }
   }
   NSLog(@"No match found for calendar with name: %@", calendarName);
@@ -379,8 +462,10 @@
     NSMutableDictionary *entry = [[NSMutableDictionary alloc] initWithObjectsAndKeys:
                                   event.title, @"title",
                                   event.calendar.title, @"calendar",
+                                  event.eventIdentifier , @"id",
                                   [df stringFromDate:event.startDate], @"startDate",
                                   [df stringFromDate:event.endDate], @"endDate",
+                                  [df stringFromDate:event.lastModifiedDate], @"lastModifiedDate",
                                   nil];
     // optional fields
     if (event.location != nil) {
@@ -409,7 +494,53 @@
       [entry setObject:attendees forKey:@"attendees"];
     }
 
-    [entry setObject:event.calendarItemIdentifier forKey:@"id"];
+    if (event.recurrenceRules != nil) {
+      for (EKRecurrenceRule *rule in event.recurrenceRules) {
+        NSMutableDictionary *rrule = [[NSMutableDictionary alloc] initWithObjectsAndKeys:
+            rule.calendarIdentifier, @"calendar", nil];
+
+        switch (rule.frequency) {
+          case EKRecurrenceFrequencyDaily:
+              [rrule setObject:@"daily" forKey:@"freq"];
+          break;
+
+          case EKRecurrenceFrequencyWeekly:
+              [rrule setObject:@"weekly" forKey:@"freq"];
+          break;
+
+          case EKRecurrenceFrequencyMonthly:
+              [rrule setObject:@"monthly" forKey:@"freq"];
+          break;
+
+          case EKRecurrenceFrequencyYearly:
+              [rrule setObject:@"yearly" forKey:@"freq"];
+          break;
+
+          default:
+              [rrule setObject:@"none" forKey:@"freq"];
+          break;
+        }
+
+        NSNumber *interval = [NSNumber numberWithInteger: rule.interval];
+        [rrule setObject:interval forKey:@"interval"];
+
+      if (rule.recurrenceEnd != nil) {
+        NSMutableDictionary *until = [[NSMutableDictionary alloc] init];
+
+        if (rule.recurrenceEnd.endDate != nil) {
+          [until setObject:[df stringFromDate:rule.recurrenceEnd.endDate] forKey:@"date"];
+        }
+
+      NSNumber *count = [NSNumber numberWithInteger: rule.recurrenceEnd.occurrenceCount];
+      [until setObject:count forKey:@"count"];
+
+        [rrule setObject:until forKey:@"until"];
+      }
+
+        [entry setObject:rrule forKey:@"rrule"];
+      }
+    }
+
     [results addObject:entry];
   }
   return results;
@@ -451,6 +582,32 @@
 }
 
 - (void) listEventsInRange:(CDVInvokedUrlCommand*)command {
+  NSDictionary* options = [command.arguments objectAtIndex:0];
+  NSNumber* startTime  = [options objectForKey:@"startTime"];
+  NSNumber* endTime    = [options objectForKey:@"endTime"];
+
+  [self.commandDelegate runInBackground: ^{
+      NSLog(@"listEventsInRange invoked");
+      NSTimeInterval _startInterval = [startTime doubleValue] / 1000; // strip millis
+      NSDate *startDate = [NSDate dateWithTimeIntervalSince1970:_startInterval];
+
+      NSTimeInterval _endInterval = [endTime doubleValue] / 1000; // strip millis
+      NSDate *endDate = [NSDate dateWithTimeIntervalSince1970:_endInterval];
+
+      NSLog(@"startDate: %@", startDate);
+      NSLog(@"endDate: %@", endDate);
+
+      CDVPluginResult *pluginResult = nil;
+
+      NSArray *calendarArray = nil;
+      NSPredicate *fetchCalendarEvents = [eventStore predicateForEventsWithStartDate:startDate endDate:endDate calendars:calendarArray];
+      NSArray *matchingEvents = [eventStore eventsMatchingPredicate:fetchCalendarEvents];
+      NSMutableArray * eventsDataArray = [self eventsToDataArray:matchingEvents];
+
+      pluginResult = [CDVPluginResult resultWithStatus: CDVCommandStatus_OK messageAsArray:eventsDataArray];
+
+      [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+  }];  
 }
 
 - (void)createEventWithOptions:(CDVInvokedUrlCommand*)command {
@@ -484,8 +641,12 @@
     NSTimeInterval _endInterval = [endTime doubleValue] / 1000; // strip millis
 
     myEvent.title = title;
-    myEvent.location = location;
-    myEvent.notes = notes;
+    if (location != (id)[NSNull null]) {
+      myEvent.location = location;
+    }
+    if (notes != (id)[NSNull null]) {
+      myEvent.notes = notes;
+    }
     myEvent.startDate = myStartDate;
 
     int duration = _endInterval - _startInterval;
@@ -555,7 +716,7 @@
     if (error) {
       pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.userInfo.description];
     } else {
-      pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:myEvent.calendarItemIdentifier];
+      pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:myEvent.eventIdentifier];
     }
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
   }];
@@ -609,8 +770,12 @@
   }
 
   myEvent.title = title;
-  myEvent.location = location;
-  myEvent.notes = notes;
+  if (location != (id)[NSNull null]) {
+      myEvent.location = location;
+  }
+  if (notes != (id)[NSNull null]) {
+      myEvent.notes = notes;
+  }
 
   [self.commandDelegate runInBackground: ^{
     EKCalendar* calendar = nil;
@@ -659,11 +824,16 @@
 
     self.interactiveCallbackId = command.callbackId;
 
-    EKEventEditViewController* controller = [[EKEventEditViewController alloc] init];
-    controller.event = myEvent;
-    controller.eventStore = self.eventStore;
-    controller.editViewDelegate = self;
-    [self.viewController presentViewController:controller animated:YES completion:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{
+    
+        //Fix ios 15.1 -- Modifications to the layout engine must not be performed from a background thread after it has been accessed from the main thread
+        EKEventEditViewController* controller = [[EKEventEditViewController alloc] init];
+        controller.event = myEvent;
+        controller.eventStore = self.eventStore;
+        controller.editViewDelegate = self;
+        //Fix ios 15.1
+        [self.viewController presentViewController:controller animated:YES completion:nil];
+    });
   }];
 }
 
@@ -693,6 +863,57 @@
   } else {
     [self deleteEventFromCalendar:command calendar: calendar];
   }
+}
+
+- (void) deleteEventById:(CDVInvokedUrlCommand*)command {
+  NSDictionary* options = [command.arguments objectAtIndex:0];
+  NSString* ciid = [options objectForKey:@"id"];
+  NSNumber* fromTime = [options objectForKey:@"fromTime"];
+
+  [self.commandDelegate runInBackground: ^{
+
+    // Get original instance
+    EKEvent* firstEvent = (EKEvent *)[eventStore eventWithIdentifier:ciid];
+    if (firstEvent == nil) {
+      // Fail
+      [self.commandDelegate
+        sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Could not find event."]
+        callbackId:command.callbackId];
+      return;
+    } else {
+      EKEvent* instance;
+      if (fromTime != nil && fromTime != (id)NSNull.null) {
+        // Find target instance
+        NSDate* fromDate = [NSDate dateWithTimeIntervalSince1970:(fromTime.doubleValue / 1000)]; // strip millis
+        NSArray<EKEvent*>* toDelete = [eventStore eventsMatchingPredicate:[eventStore predicateForEventsWithStartDate:fromDate endDate:NSDate.distantFuture calendars:@[firstEvent.calendar]]];
+        if (toDelete.count < 1) {
+          // Nothing to delete
+          [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK] callbackId:command.callbackId];
+          return;
+        }
+        NSArray<EKEvent*>* toDeleteSorted = [toDelete sortedArrayUsingSelector:@selector(compareStartDateWithEvent:)];
+        instance = toDeleteSorted.firstObject;
+      } else {
+        // First instance is target
+        instance = firstEvent;
+      }
+
+      // Delete
+      NSError *error = nil;
+      [eventStore removeEvent:instance span:EKSpanFutureEvents error:&error];
+      if (error != nil) {
+        // Fail
+        [self.commandDelegate
+          sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Could not delete event."]
+          callbackId:command.callbackId];
+        return;
+      } else {
+        // Succeed
+        [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK] callbackId:command.callbackId];
+        return;
+      }
+    }
+  }];
 }
 
 - (void) findAllEventsInNamedCalendar:(CDVInvokedUrlCommand*)command {
@@ -768,9 +989,9 @@
     }
 
     // Find matches
-    EKCalendarItem *theEvent;
+    EKCalendarItem *theEvent = nil;
     if (calEventID != nil) {
-      theEvent = [self.eventStore calendarItemWithIdentifier:calEventID];
+      theEvent = [self.eventStore eventWithIdentifier:calEventID];
     }
 
     NSArray *matchingEvents;
@@ -871,7 +1092,7 @@
 
     case EKEventEditViewActionSaved:
       [controller.eventStore saveEvent:controller.event span:EKSpanThisEvent error:&error];
-      pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:controller.event.calendarItemIdentifier];
+      pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:controller.event.eventIdentifier];
       break;
 
     case EKEventEditViewActionDeleted:
@@ -889,6 +1110,48 @@
     pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:error.userInfo.description];
   }
   [self.commandDelegate sendPluginResult:pluginResult callbackId:self.interactiveCallbackId];
+}
+
+
+/* There is no distinction between read and write access in iOS */
+- (void)hasReadPermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(self.eventStore != nil)];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)requestReadPermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:[self requestFullCalendarAccess]];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)hasWritePermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(self.eventStore != nil)];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)requestWritePermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:[self requestWriteCalendarAccess]];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)hasReadWritePermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:(self.eventStore != nil)];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)requestReadWritePermission:(CDVInvokedUrlCommand*)command {
+  CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:[self requestFullCalendarAccess]];
+  [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+-(CDVCommandStatus)requestFullCalendarAccess{
+  [self initEventStoreWithFullCalendarCapabilities];
+  return (self.eventStore != nil) ? CDVCommandStatus_OK : CDVCommandStatus_ERROR;
+}
+
+-(CDVCommandStatus)requestWriteCalendarAccess{
+  [self initEventStoreWithWriteCalendarCapabilities];
+  return (self.eventStore != nil) ? CDVCommandStatus_OK : CDVCommandStatus_ERROR;
 }
 
 @end
